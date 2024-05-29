@@ -1,5 +1,4 @@
 local format = require("copilot_cmp.format")
-local api = require("copilot.api")
 
 local methods = {
   opts = {
@@ -23,7 +22,7 @@ methods.getCompletionsCycling = function(self, params, callback)
     })
   end
 
-  api.get_completions_cycling(self.client, get_doc_params(), respond_callback)
+  get_completions_cycling(self.client, get_doc_params(), respond_callback)
   return callback({ isIncomplete = true, items = {} })
 end
 
@@ -46,6 +45,38 @@ function get_doc_params(overrides)
   params.position = params.doc.position
 
   return params
+end
+
+---@param ctx copilot_suggestion_context
+local function get_suggestions_cycling_callback(ctx, err, data)
+  local callbacks = ctx.cycling_callbacks or {}
+  ctx.cycling_callbacks = nil
+
+  if err then
+    print(err)
+    return
+  end
+
+  if not ctx.suggestions then
+    return
+  end
+
+  local seen = {}
+
+  for _, suggestion in ipairs(ctx.suggestions) do
+    seen[suggestion.text] = true
+  end
+
+  for _, suggestion in ipairs(data.completions or {}) do
+    if not seen[suggestion.text] then
+      table.insert(ctx.suggestions, suggestion)
+      seen[suggestion.text] = true
+    end
+  end
+
+  for _, callback in ipairs(callbacks) do
+    callback(ctx)
+  end
 end
 
 return methods
