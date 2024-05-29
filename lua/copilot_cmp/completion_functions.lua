@@ -35,7 +35,7 @@ function get_doc_params(overrides)
   overrides = overrides or {}
 
   local params = vim.tbl_extend("keep", {
-    doc = vim.tbl_extend("force", M.get_doc(), overrides.doc or {}),
+    doc = vim.tbl_extend("force", get_doc(), overrides.doc or {}),
   }, overrides)
   params.textDocument = {
     uri = params.doc.uri,
@@ -47,36 +47,55 @@ function get_doc_params(overrides)
   return params
 end
 
----@param ctx copilot_suggestion_context
-local function get_suggestions_cycling_callback(ctx, err, data)
-  local callbacks = ctx.cycling_callbacks or {}
-  ctx.cycling_callbacks = nil
+function get_completions_cycling(client, params, callback)
+  return request(client, "getCompletionsCycling", params, callback)
+end
 
-  if err then
-    print(err)
-    return
+---@param callback? fun(err: any|nil, data: table, ctx: table): nil
+---@return any|nil err
+---@return table data
+---@return table ctx
+function request(client, method, params, callback)
+  -- hack to convert empty table to json object,
+  -- empty table is convert to json array by default.
+  params._ = true
+
+  local bufnr = params.bufnr
+  params.bufnr = nil
+
+  if callback then
+    return client.request(method, params, callback, bufnr)
   end
 
-  if not ctx.suggestions then
-    return
-  end
+  local co = coroutine.running()
+  client.request(method, params, function(err, data, ctx)
+    coroutine.resume(co, err, data, ctx)
+  end, bufnr)
+  return coroutine.yield()
+end
 
-  local seen = {}
+function get_doc()
+  local absolute = vim.api.nvim_buf_get_name(0)
+  local params = vim.lsp.util.make_position_params(0, "utf-16") -- copilot server uses utf-16
+  local doc = {
+    uri = params.textDocument.uri,
+    version = vim.api.nvim_buf_get_var(0, "changedtick"),
+    relativePath = relative_path(absolute),
+    insertSpaces = vim.o.expandtab,
+    tabSize = vim.fn.shiftwidth(),
+    indentSize = vim.fn.shiftwidth(),
+    position = params.position,
+  }
 
-  for _, suggestion in ipairs(ctx.suggestions) do
-    seen[suggestion.text] = true
-  end
+  return doc
+end
 
-  for _, suggestion in ipairs(data.completions or {}) do
-    if not seen[suggestion.text] then
-      table.insert(ctx.suggestions, suggestion)
-      seen[suggestion.text] = true
-    end
+function relative_path(absolute)
+  local relative = vim.fn.fnamemodify(absolute, ":.")
+  if string.sub(relative, 0, 1) == "/" then
+    return vim.fn.fnamemodify(absolute, ":t")
   end
-
-  for _, callback in ipairs(callbacks) do
-    callback(ctx)
-  end
+  return relative
 end
 
 return methods
